@@ -57,12 +57,12 @@ async function processMessage(messageFile) {
         let response;
         try {
             response = execSync(
-                `cd "${SCRIPT_DIR}" && claude ${continueFlag}-p "${message.replace(/"/g, '\\"')}"`,
-                {
-                    encoding: 'utf-8',
-                    timeout: 120000, // 2 minute timeout
-                    maxBuffer: 10 * 1024 * 1024 // 10MB buffer
-                }
+              `cd "${SCRIPT_DIR}" && claude --dangerously-skip-permissions ${continueFlag}-p "${message.replace(/"/g, '\\"')}"`,
+              {
+                encoding: "utf-8",
+                timeout: 120000, // 2 minute timeout
+                maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+              },
             );
         } catch (error) {
             log('ERROR', `Claude error: ${error.message}`);

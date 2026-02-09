@@ -6,6 +6,9 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name')
 LOGFILE="$CLAUDE_PROJECT_DIR/.tinyclaw/logs/activity.log"
 
 mkdir -p "$(dirname "$LOGFILE")"
-echo "[$(date)] $TOOL_NAME" >> "$LOGFILE"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] $TOOL_NAME" >> "$LOGFILE"
+echo "$INPUT" | jq '.' >> "$LOGFILE"
+echo "" >> "$LOGFILE"
 
 exit 0

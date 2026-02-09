@@ -1,357 +1,412 @@
-# TinyClaw Simple
+# TinyClaw 🦞
 
-The simplest TinyClaw implementation using `claude -c -p` for clean response handling.
+Minimal multi-channel AI assistant with WhatsApp integration and queue-based architecture.
 
-## Architecture
+## 🎯 What is TinyClaw?
+
+TinyClaw is a lightweight wrapper around [Claude Code](https://claude.com/claude-code) that:
+- ✅ Connects WhatsApp (via QR code)
+- ✅ Processes messages sequentially (no race conditions)
+- ✅ Maintains conversation context
+- ✅ Runs 24/7 in tmux
+- ✅ Ready for multi-channel (Telegram, etc.)
+
+**Key innovation:** File-based queue system prevents race conditions and enables multi-channel support.
+
+## 📐 Architecture
 
 ```
-┌─────────────────────────────────────┐
-│     Tmux Session (tinyclaw)         │
-│                                     │
-│  ┌────────────────────────────────┐│
-│  │ whatsapp-monitor.sh            ││
-│  │ - Polls queue for messages     ││
-│  │ - Calls: claude -c -p "$msg"   ││
-│  │ - Gets clean final response    ││
-│  │ - Saves response for WhatsApp  ││
-│  └────────────────────────────────┘│
-│                                     │
-│  ┌────────────────────────────────┐│
-│  │ heartbeat-cron.sh              ││
-│  │ - Every 5 minutes              ││
-│  │ - Calls: claude -c -p "$prompt"││
-│  │ - Keeps Claude active          ││
-│  └────────────────────────────────┘│
-└─────────────────────────────────────┘
-         │                │
-         ▼                ▼
-    WhatsApp         Heartbeat
-    Response         Logging
+┌─────────────────┐
+│  WhatsApp       │──┐
+│  Client         │  │
+└─────────────────┘  │
+                     ├──→ Queue (incoming/)
+┌─────────────────┐  │        ↓
+│  Telegram       │──┤   ┌──────────────┐
+│  (future)       │  │   │   Queue      │
+└─────────────────┘  │   │  Processor   │
+                     │   └──────────────┘
+Other Channels ──────┘        ↓
+                         claude --dangerously-skip-permissions -c -p
+                              ↓
+                         Queue (outgoing/)
+                              ↓
+                    ┌─────────────────┐
+                    │ Channels send   │
+                    │ responses       │
+                    └─────────────────┘
 ```
 
-## Key Innovation
+### Tmux Layout
 
-Uses `claude -c -p` (continue + print mode):
+```
+┌──────────────┬──────────────┐
+│  WhatsApp    │    Queue     │
+│  Client      │  Processor   │
+├──────────────┼──────────────┤
+│  Heartbeat   │    Logs      │
+└──────────────┴──────────────┘
+```
 
-- `-c` = continue previous conversation
-- `-p` = print mode (returns just final response)
-- No tmux capture needed!
-- Clean, parseable output
+## 🚀 Quick Start
 
-## Setup
+### Prerequisites
+
+- macOS or Linux
+- [Claude Code](https://claude.com/claude-code) installed
+- Node.js v14+
+- tmux
+
+### Installation
 
 ```bash
-cd /Users/jliao/workspace/tinyclaw-simple
+cd /Users/jliao/workspace/tinyclaw
 
-# Make executable
-chmod +x *.sh .claude/hooks/*.sh
+# Install dependencies
+npm install
 
-# Start daemon
+# Make scripts executable
+chmod +x *.sh *.js
+
+# Start TinyClaw
+./tinyclaw.sh start
+```
+
+### First Run
+
+A QR code will appear in your terminal:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        WhatsApp QR Code
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[QR CODE HERE]
+
+📱 Scan with WhatsApp:
+   Settings → Linked Devices → Link a Device
+```
+
+Scan it with your phone. **Done!** 🎉
+
+### Test It
+
+Send a WhatsApp message to yourself:
+```
+"Hello Claude!"
+```
+
+You'll get a response! 🤖
+
+## 📋 Commands
+
+```bash
+# Start TinyClaw
 ./tinyclaw.sh start
 
 # Check status
 ./tinyclaw.sh status
+
+# Send manual message
+./tinyclaw.sh send "What's the weather?"
+
+# Reset conversation
+./tinyclaw.sh reset
+
+# View logs
+./tinyclaw.sh logs whatsapp
+./tinyclaw.sh logs queue
+
+# Attach to tmux
+./tinyclaw.sh attach
+
+# Stop
+./tinyclaw.sh stop
 ```
 
-## Usage
+## 🔧 Components
 
-### Send Message Manually
+### 1. whatsapp-client.js
+- Connects to WhatsApp via QR code
+- Writes incoming messages to queue
+- Reads responses from queue
+- Sends replies back
 
-```bash
-./tinyclaw.sh send "What's the status?"
-```
-
-### WhatsApp Integration
-
-**From your WhatsApp bot/webhook:**
-
-```bash
-# Queue a message
-./whatsapp-webhook.sh "user123" "Check the logs"
-
-# Returns the response (waits up to 30s)
-```
-
-**Example with curl (for HTTP webhook):**
-
-```bash
-# Simple HTTP webhook wrapper
-curl -X POST http://your-server/whatsapp \
-  -d "sender=user123" \
-  -d "message=Check status"
-```
-
-### Heartbeat
-
-Automatically runs every 5 minutes. Edit `.tinyclaw/heartbeat.md` to customize:
-
-```markdown
-Check for:
-
-1. Pending GitHub issues
-2. Failed CI/CD jobs
-3. Unread notifications
-
-If found, take action. Otherwise say "All clear."
-```
-
-## Components
-
-### 1. tinyclaw.sh
-
-Main orchestrator:
-
-- Starts tmux session
-- Launches monitor and heartbeat
-- Provides CLI interface
-
-### 2. whatsapp-monitor.sh
-
-Monitors queue directory for messages:
-
-- Polls `.tinyclaw/whatsapp_queue/*.msg`
-- Sends to Claude via `claude -c -p`
-- Saves response for pickup
+### 2. queue-processor.js
+- Polls incoming queue
+- Processes **ONE message at a time**
+- Calls `claude -c -p`
+- Writes responses to outgoing queue
 
 ### 3. heartbeat-cron.sh
-
-Periodic health check:
-
-- Runs every 5 minutes (configurable)
+- Runs every 5 minutes
+- Sends heartbeat via queue
 - Keeps conversation active
-- Logs responses
 
-### 4. whatsapp-webhook.sh
+### 4. tinyclaw.sh
+- Main orchestrator
+- Manages tmux session
+- CLI interface
 
-Webhook receiver:
-
-- Queues incoming messages
-- Waits for response
-- Returns to caller
-
-## Hooks
-
-Uses Claude Code hooks in `.claude/settings.json`:
-
-- **SessionStart**: Announces TinyClaw is active
-- **PostToolUse**: Logs all activity
-
-Hooks are lightweight - main logic is in the daemon scripts.
-
-## Message Flow
-
-### Incoming WhatsApp Message
+## 💬 Message Flow
 
 ```
-1. WhatsApp webhook receives message
-2. Calls: ./whatsapp-webhook.sh "user" "message"
-3. Creates: .tinyclaw/whatsapp_queue/user.msg
-4. whatsapp-monitor.sh detects file
-5. Runs: claude -c -p "message"
-6. Gets clean response
-7. Saves: .tinyclaw/whatsapp_queue/response_user.txt
-8. webhook.sh reads response
-9. Returns to WhatsApp
+WhatsApp message arrives
+       ↓
+whatsapp-client.js writes to:
+  .tinyclaw/queue/incoming/whatsapp_<id>.json
+       ↓
+queue-processor.js picks it up
+       ↓
+Runs: claude -c -p "message"
+       ↓
+Writes to:
+  .tinyclaw/queue/outgoing/whatsapp_<id>.json
+       ↓
+whatsapp-client.js sends response
+       ↓
+User receives reply
 ```
 
-### Heartbeat Flow
+## 📁 Directory Structure
 
 ```
-1. Every 5 minutes
-2. Reads: .tinyclaw/heartbeat.md
-3. Runs: claude -c -p "$prompt"
-4. Logs response
-5. Keeps session active
+tinyclaw/
+├── .claude/              # Claude Code config
+│   ├── settings.json     # Hooks config
+│   └── hooks/            # Hook scripts
+├── .tinyclaw/            # TinyClaw data
+│   ├── queue/
+│   │   ├── incoming/     # New messages
+│   │   ├── processing/   # Being processed
+│   │   └── outgoing/     # Responses
+│   ├── logs/
+│   ├── whatsapp-session/
+│   └── heartbeat.md
+├── tinyclaw.sh           # Main script
+├── whatsapp-client.js    # WhatsApp I/O
+├── queue-processor.js    # Message processing
+└── heartbeat-cron.sh     # Health checks
 ```
 
-## Advantages
+## 🔄 Reset Conversation
 
-✅ **Clean responses** - `claude -c -p` returns just the answer
-✅ **No parsing** - No need to extract from tmux output
-✅ **Conversation continuity** - `-c` maintains context
-✅ **Simple** - No complex tmux capture logic
-✅ **Reliable** - Built-in Claude feature
+### Via CLI
+```bash
+./tinyclaw.sh reset
+```
 
-## Testing
+### Via WhatsApp
+Send: `!reset` or `/reset`
 
-### Test WhatsApp Flow
+Next message starts fresh (no conversation history).
+
+## ⚙️ Configuration
+
+### Heartbeat Interval
+
+Edit `heartbeat-cron.sh`:
+```bash
+INTERVAL=300  # seconds (5 minutes)
+```
+
+### Heartbeat Prompt
+
+Edit `.tinyclaw/heartbeat.md`:
+```markdown
+Check for:
+1. Pending tasks
+2. Errors
+3. Unread messages
+
+Take action if needed.
+```
+
+## 📊 Monitoring
+
+### View Logs
 
 ```bash
-# Terminal 1: Start daemon
-./tinyclaw.sh start
-
-# Terminal 2: Send message via webhook
-./whatsapp-webhook.sh "testuser" "What's 2+2?"
-
-# Should return: "4" (or Claude's response)
-```
-
-### Test Heartbeat
-
-```bash
-# Watch heartbeat log
-tail -f .tinyclaw/logs/heartbeat.log
-
-# Should see updates every 5 minutes
-```
-
-### Test Manual Message
-
-```bash
-./tinyclaw.sh send "Hello Claude!"
-```
-
-## Logs
-
-```bash
-# All logs
-ls .tinyclaw/logs/
-
-# Main daemon log
-tail -f .tinyclaw/logs/daemon.log
-
 # WhatsApp activity
 tail -f .tinyclaw/logs/whatsapp.log
+
+# Queue processing
+tail -f .tinyclaw/logs/queue.log
 
 # Heartbeat checks
 tail -f .tinyclaw/logs/heartbeat.log
 
-# Tool usage
-tail -f .tinyclaw/logs/activity.log
+# All logs
+./tinyclaw.sh logs daemon
 ```
 
-## Configuration
-
-### Adjust Heartbeat Interval
-
-Edit `heartbeat-cron.sh`:
+### Watch Queue
 
 ```bash
-INTERVAL=300  # Change to desired seconds
+# Incoming messages
+watch -n 1 'ls -lh .tinyclaw/queue/incoming/'
+
+# Outgoing responses
+watch -n 1 'ls -lh .tinyclaw/queue/outgoing/'
 ```
 
-### Customize Heartbeat Prompt
+## 🎨 Features
 
-Edit `.tinyclaw/heartbeat.md`:
+### ✅ No Race Conditions
 
-```markdown
-Your custom prompt here
+Messages processed **sequentially**, one at a time:
+```
+Message 1 → Process → Done
+Message 2 → Wait → Process → Done
+Message 3 → Wait → Process → Done
 ```
 
-## WhatsApp Integration Examples
+### ✅ Multi-Channel Ready
 
-### Using Twilio
-
-```python
-# Flask webhook
-from flask import Flask, request
-import subprocess
-
-app = Flask(__name__)
-
-@app.route('/whatsapp', methods=['POST'])
-def whatsapp():
-    sender = request.form['From']
-    message = request.form['Body']
-
-    # Call webhook script
-    result = subprocess.run(
-        ['./whatsapp-webhook.sh', sender, message],
-        capture_output=True,
-        text=True
-    )
-
-    return result.stdout
-```
-
-### Using WhatsApp Web.js
-
+Add Telegram by creating `telegram-client.js`:
 ```javascript
-// Node.js integration
-const { Client } = require("whatsapp-web.js");
-const { execSync } = require("child_process");
+// Write to queue
+fs.writeFileSync(
+  '.tinyclaw/queue/incoming/telegram_<id>.json',
+  JSON.stringify({ channel: 'telegram', message, ... })
+);
 
-client.on("message", async (msg) => {
-  const response = execSync(
-    `./whatsapp-webhook.sh "${msg.from}" "${msg.body}"`,
-    { encoding: "utf-8" },
-  );
-
-  await msg.reply(response);
-});
+// Read responses
+// Same format as WhatsApp
 ```
 
-## Troubleshooting
+Queue processor handles it automatically!
+
+### ✅ Clean Responses
+
+Uses `claude -c -p`:
+- `-c` = continue conversation
+- `-p` = print mode (clean output)
+- No tmux capture needed
+
+### ✅ Persistent Sessions
+
+WhatsApp session persists across restarts:
+```bash
+# First time: Scan QR code
+./tinyclaw.sh start
+
+# Subsequent starts: Auto-connects
+./tinyclaw.sh restart
+```
+
+## 🔐 Security
+
+- WhatsApp session stored locally in `.tinyclaw/whatsapp-session/`
+- Queue files are local (no network exposure)
+- Each channel handles its own authentication
+- Claude runs with your user permissions
+
+## 🐛 Troubleshooting
+
+### WhatsApp not connecting
+
+```bash
+# Check logs
+./tinyclaw.sh logs whatsapp
+
+# Re-authenticate
+rm -rf .tinyclaw/whatsapp-session/
+./tinyclaw.sh restart
+```
 
 ### Messages not processing
 
 ```bash
-# Check monitor is running
-pgrep -f "whatsapp-monitor.sh"
+# Check queue processor
+./tinyclaw.sh status
 
 # Check queue
-ls -la .tinyclaw/whatsapp_queue/
+ls -la .tinyclaw/queue/incoming/
 
-# View monitor log
-tail -f .tinyclaw/logs/whatsapp.log
+# View queue logs
+./tinyclaw.sh logs queue
 ```
 
-### Heartbeat not firing
+### QR code not showing
 
 ```bash
-# Check process
-pgrep -f "heartbeat-cron.sh"
+# Use helper script
+./show-qr.sh
 
-# Check log
-tail -f .tinyclaw/logs/heartbeat.log
-
-# Restart daemon
-./tinyclaw.sh restart
-```
-
-### Session not continuing
-
-```bash
-# Check session exists
-claude --resume
-
-# Check tmux session
+# Or attach to tmux
 tmux attach -t tinyclaw
 ```
 
-## Production Deployment
+## 🚀 Production Deployment
 
-For production, use a process manager:
+### Using systemd
 
 ```bash
-# Using systemd
 sudo systemctl enable tinyclaw
 sudo systemctl start tinyclaw
-
-# Or PM2
-pm2 start tinyclaw.sh --name tinyclaw
-
-# Or supervisor
-[program:tinyclaw]
-command=/path/to/tinyclaw.sh start
 ```
 
-## Comparison
+### Using PM2
 
-| Feature         | TinyClaw Simple    | TinyClaw Full | Hooks-Only   |
-| --------------- | ------------------ | ------------- | ------------ |
-| Clean responses | ✅ `claude -c -p`  | ⚠️ Complex    | ❌           |
-| WhatsApp        | ✅ Via webhook     | ✅ Native     | ⚠️ Manual    |
-| Heartbeat       | ✅ Cron script     | ✅            | ✅ Stop hook |
-| Tmux            | ✅ For persistence | ✅            | ❌           |
-| Simplicity      | ✅✅               | ⚠️            | ✅           |
+```bash
+pm2 start tinyclaw.sh --name tinyclaw
+pm2 save
+```
 
-## License
+### Using supervisor
+
+```ini
+[program:tinyclaw]
+command=/path/to/tinyclaw/tinyclaw.sh start
+autostart=true
+autorestart=true
+```
+
+## 📚 Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design details
+- **[DIRECTORY_STRUCTURE.md](DIRECTORY_STRUCTURE.md)** - File organization
+- **[RESET_GUIDE.md](RESET_GUIDE.md)** - Reset command details
+- **[QUICKSTART.md](QUICKSTART.md)** - Step-by-step tutorial
+- **[INSTALL.md](INSTALL.md)** - Installation guide
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history
+
+## 🎯 Use Cases
+
+### Personal AI Assistant
+```
+You: "Remind me to call mom"
+Claude: "I'll remind you!"
+[5 minutes later via heartbeat]
+Claude: "Don't forget to call mom!"
+```
+
+### Code Helper
+```
+You: "Review my code"
+Claude: [reads files, provides feedback]
+You: "Fix the bug"
+Claude: [fixes and commits]
+```
+
+### Multi-Device
+- WhatsApp on phone
+- Telegram on desktop
+- CLI for scripts
+All share the same Claude conversation!
+
+## 🙏 Credits
+
+- Inspired by [OpenClaw](https://openclaw.ai/) by Peter Steinberger
+- Built on [Claude Code](https://claude.com/claude-code)
+- Uses [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js)
+
+## 📄 License
 
 MIT
 
-## Credits
+---
 
-- Inspired by [TinyClaw](https://tinyclaw.ai/)
-- Built on [Claude Code](https://claude.com/claude-code)
-- Uses native `claude -c -p` feature
+**TinyClaw - Small but mighty!** 🦞✨
+

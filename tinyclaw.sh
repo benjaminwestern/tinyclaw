@@ -206,7 +206,7 @@ send_message() {
 
     # Use claude -c -p to continue and get final response
     cd "$SCRIPT_DIR"
-    RESPONSE=$(claude -c -p "$message" 2>&1)
+    RESPONSE=$(claude --dangerously-skip-permissions -c -p "$message" 2>&1)
 
     echo "$RESPONSE"
 
